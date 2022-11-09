@@ -1,0 +1,41 @@
+{
+    "C/C++ Include Guard.Macro Type": "Filename",
+    "C/C++ Include Guard.Path Depth": 1,
+    "C/C++ Include Guard.Prefix": "",
+    "C/C++ Include Guard.Suffix": "_H_",
+    "[c]": {
+        "editor.tabSize": 8,
+        "editor.useTabStops": true
+    },
+    "[cpp]": {
+        "editor.tabSize": 8,
+        "editor.useTabStops": true
+    },
+    "[objective-c]": {
+        "editor.tabSize": 8,
+        "editor.useTabStops": true
+    },
+    "[m]": {
+        "editor.tabSize": 8,
+        "editor.useTabStops": true
+    },
+    "[Objective-C]": {
+        "editor.tabSize": 8,
+        "editor.useTabStops": true
+    },
+    "[meson]": {
+        "editor.tabSize": 4,
+        "editor.useTabStops": true
+    },
+    "[Meson]": {
+        "editor.tabSize": 4,
+        "editor.useTabStops": true
+    },
+    "[*.build]": {
+        "editor.tabSize": 4,
+        "editor.useTabStops": true
+    },
+    "files.insertFinalNewline": true,
+    "files.trimFinalNewlines": true,
+    "mesonbuild.configureOnOpen": false
+}

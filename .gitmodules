@@ -1,0 +1,3 @@
+[submodule "vm/mir"]
+	path = vm/mir
+	url = ../oops-mir
