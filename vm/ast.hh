@@ -6,6 +6,9 @@
 #include <typeinfo>
 #include <vector>
 
+class CodeScope;
+class Variable;
+
 static inline std::string
 blanks(size_t n)
 {
@@ -80,6 +83,36 @@ struct Token {
 	std::string stringValue;
 };
 
+class ClassNode;
+class MethodNode;
+class ReturnStmtNode;
+class ExprStmtNode;
+class BlockExprNode;
+class CascadeExprNode;
+class MessageExprNode;
+class AssignExprNode;
+class IdentExprNode;
+class IntExprNode;
+class ExprNode;
+class VarDecl;
+
+class Visitor {
+    public:
+	virtual void visitClass(ClassNode *node);
+	virtual void visitMethod(MethodNode *node);
+	virtual void visitParameterDecl(VarDecl &node) {}
+	virtual void visitLocalDecl(VarDecl &node) {}
+	virtual void visitReturnStmt(ReturnStmtNode *node);
+	virtual void visitBlockLocalReturn(ExprNode *node);
+	virtual void visitExprStmt(ExprStmtNode *node);
+	virtual void visitBlockExpr(BlockExprNode *node);
+	virtual void visitCascadeExpr(CascadeExprNode *node) {}
+	virtual void visitMessageExpr(MessageExprNode *node);
+	virtual void visitAssignExpr(AssignExprNode *node) {}
+	virtual void visitIdentExpr(IdentExprNode *node) {}
+	virtual void visitIntExpr(IntExprNode *node) {}
+};
+
 struct Node {
 	Position m_pos;
 
@@ -87,6 +120,7 @@ struct Node {
 	Node(Position pos)
 	    : m_pos(pos) {};
 
+	virtual void accept(Visitor &visitor) { }
 	virtual void print(int in)
 	{
 		printf("<node: %s/>\n", typeid(*this).name());
@@ -191,6 +225,8 @@ struct IntExprNode : public LiteralExprNode {
 	    , num(aNum)
 	{
 	}
+
+	void accept(Visitor &visitor) { visitor.visitIntExpr(this); }
 };
 
 /* String literal */
@@ -229,14 +265,19 @@ struct ArrayExprNode : public LiteralExprNode {
 struct IdentExprNode : ExprNode {
 	std::string id;
 
+	/* semantic analysis */
+	Variable * variable;
+
 	IdentExprNode(Position pos, std::string id)
 	    : ExprNode(pos)
 	    , id(id)
 	{
 	}
 
-	bool isSuper() override { return id == "super"; }
-	bool isSelf() override { return id == "self"; }
+	void accept(Visitor &visitor) { visitor.visitIdentExpr(this); }
+
+	bool isSuper() { return id == "super"; }
+	bool isSelf() { return id == "self"; }
 };
 
 struct AssignExprNode : ExprNode {
@@ -249,6 +290,8 @@ struct AssignExprNode : ExprNode {
 	    , right(r)
 	{
 	}
+
+	void accept(Visitor &visitor) { visitor.visitAssignExpr(this); }
 };
 
 struct MessageExprNode : ExprNode {
@@ -275,6 +318,8 @@ struct MessageExprNode : ExprNode {
 			args.push_back(p.second);
 		}
 	}
+
+	void accept(Visitor &visitor) { visitor.visitMessageExpr(this); }
 };
 
 struct CascadeExprNode : ExprNode {
@@ -291,26 +336,32 @@ struct CascadeExprNode : ExprNode {
 			messages.push_back(m);
 		}
 	}
+
+	void accept(Visitor &visitor) { visitor.visitCascadeExpr(this); }
 };
 
 class BlockExprNode : public ExprNode {
     public:
-	std::vector<VarDecl> args;
-	std::vector<VarDecl> locals;
-	std::vector<StmtNode *> stmts;
+	std::vector<VarDecl> m_args;
+	std::vector<VarDecl> m_locals;
+	std::vector<StmtNode *> m_stmts;
+
+	/* semantic analysis */
+	CodeScope * scope;
 
 	BlockExprNode(std::vector<VarDecl> args, std::vector<VarDecl> locals,
 	    std::vector<StmtNode *> stmts)
 	    : ExprNode({})
-	    , args(args)
-	    , locals(locals)
-	    , stmts(stmts)
+	    , m_args(args)
+	    , m_locals(locals)
+	    , m_stmts(stmts)
 	{
 	}
 
-	void print(int in) override;
+	void accept(Visitor &visitor) { visitor.visitBlockExpr(this); }
+	void print(int in);
 
-	bool isSelf() override; /**< in case inlined */
+	bool isSelf(); /**< in case inlined */
 };
 
 struct ExprStmtNode : public StmtNode {
@@ -322,6 +373,7 @@ struct ExprStmtNode : public StmtNode {
 	{
 	}
 
+	void accept(Visitor &visitor) { visitor.visitExprStmt(this); }
 	virtual void print(int in);
 };
 
@@ -334,7 +386,8 @@ struct ReturnStmtNode : public StmtNode {
 	{
 	}
 
-	void print(int in) override;
+	void accept(Visitor &visitor) { visitor.visitReturnStmt(this); }
+	void print(int in);
 };
 
 /*!
@@ -348,6 +401,9 @@ class MethodNode : public DeclNode {
 	std::vector<VarDecl> m_locals;
 	std::vector<StmtNode *> m_statements;
 
+	/* semantic analysis */
+	CodeScope * scope;
+
 	MethodNode(bool isClassMethod, std::string selector,
 	    std::vector<VarDecl> parameters, std::vector<VarDecl> locals,
 	    std::vector<StmtNode *> statements)
@@ -357,6 +413,8 @@ class MethodNode : public DeclNode {
 	    , m_parameters(parameters)
 	    , m_locals(locals)
 	    , m_statements(statements) {};
+
+	void accept(Visitor &visitor) { visitor.visitMethod(this); }
 };
 
 /*!
@@ -368,6 +426,9 @@ class ClassNode : public DeclNode {
 	std::string m_superName;
 	std::vector<VarDecl> m_instanceVars;
 	std::vector<VarDecl> m_classVars;
+	std::vector<MethodNode*> m_instanceMethods;
+	std::vector<MethodNode*> m_classMethods;
+
 
 	ClassNode(std::string name, std::string superName,
 	    std::vector<VarDecl> instanceVars, std::vector<VarDecl> classVars)
@@ -376,6 +437,11 @@ class ClassNode : public DeclNode {
 	    , m_superName(superName)
 	    , m_instanceVars(instanceVars)
 	    , m_classVars(classVars) {};
+
+	void accept(Visitor &visitor) { visitor.visitClass(this); }
+
+	void addMethods(std::vector<MethodNode *> meths);
+
 };
 
 } /* namespace AST */

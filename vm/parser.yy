@@ -34,7 +34,7 @@ static std::string removeFirstAndLastChar(std::string aString)
 %left BAR.
 
 %code {
-ProgramNode * MVST_Parser::parseFile (std::string fName, std::string src)
+std::vector<DeclNode*> MVST_Parser::parseFile (std::string fName, std::string src)
 {
 	MVST_Parser *parser;
 	yyscan_t scanner;
@@ -52,7 +52,7 @@ ProgramNode * MVST_Parser::parseFile (std::string fName, std::string src)
 		;
 	parser->parse(0);
 
-	return parser->program;
+	return parser->decls;
 }
 
 MethodNode * MVST_Parser::parseText (std::string src)
@@ -121,22 +121,21 @@ prog ::= decl_list. { printf("Program finished!!\n"); }
 
 %type decl_list { std::vector<DeclNode *> }
 %type decl { DeclNode * }
-%type class_def { DeclNode * }
+%type class_def { ClassNode * }
 
-decl_list(L) ::= decl(d). { L = {d}; }
-decl_list(L) ::= decl_list(l) decl(d).
-	{
-		L = l;
-		L.push_back(d);
-	}
+decl_list ::= decl(d).
+		{ decls.push_back(d); }
+decl_list ::= decl_list(l) decl(d).
+		{ decls.push_back(d); }
 
 decl ::= class_def.
 
 
 class_def(D) ::= identifier(super) type_args_opt(superTyArgs) SUBCLASSCOLON
     identifier(name) type_params_opt(tyParams) SQB_OPEN
-    var_defs_opt(iVars) method_defs_opt(iMeths) SQB_CLOSE. {
+    var_defs_opt(iVars) method_defs_opt(methods) SQB_CLOSE. {
 	D = new ClassNode(name, super, iVars, {});
+	D->addMethods(methods);
 }
 
 %type ivar_cvar_defs_opt { std::vector<VarDecl> }

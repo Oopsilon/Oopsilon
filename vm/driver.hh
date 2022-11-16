@@ -25,8 +25,8 @@ class MVST_Parser : public lemon_base<AST::Token> {
 	std::string fName;
 	std::string path;
 	std::string &fText;
-	ProgramNode *program;
-	AST::MethodNode *meth;
+	std::vector<AST::DeclNode *> decls; /* for parseFile */
+	AST::MethodNode *meth;		    /* for parseText */
 	size_t m_line = 0, m_col = 0, m_pos = 0;
 	size_t m_oldLine = 0, m_oldCol = 0, m_oldPos = 0;
 
@@ -37,14 +37,15 @@ class MVST_Parser : public lemon_base<AST::Token> {
 	int col() const { return m_col; }
 	int pos1() const { return m_pos; }
 
-	static ProgramNode *parseFile(std::string fName, std::string text);
+	static std::vector<AST::DeclNode *> parseFile(std::string fName,
+	    std::string text);
 	static AST::MethodNode *parseText(std::string text);
 	static MVST_Parser *create(std::string fName, std::string &fText);
 
 	MVST_Parser(std::string f, std::string &ft)
 	    : fName(f)
 	    , fText(ft)
-	    , program(nullptr) {};
+	    , meth(nullptr) {};
 
 	/* parsing */
 	void parse(int major) { parse(major, AST::Token { pos() }); }
