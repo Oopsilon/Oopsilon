@@ -45,29 +45,56 @@ Visitor::visitExprStmt(ExprStmtNode *node)
 void
 Visitor::visitBlockExpr(BlockExprNode *node)
 {
+	for (auto &parameter : node->m_args)
+		visitParameterDecl(parameter);
+	for (auto &local : node->m_locals)
+		visitLocalDecl(local);
 	for (auto &stmt : node->m_stmts) {
-		AST::ExprNode *expr;
+		AST::ExprStmtNode *expr;
 
 		/*
 		 * if it's the last statement, turn it into a local return
 		 */
 		if (stmt == node->m_stmts.back() &&
-		    (expr = dynamic_cast<AST::ExprNode *>(stmt)) != NULL) {
+		    (expr = dynamic_cast<AST::ExprStmtNode *>(stmt)) != NULL) {
 			/* last statement becomes the expression
 			 * returned */
-			this->visitBlockLocalReturn(expr);
+			this->visitBlockLocalReturn(expr->expr);
 		} else
 			stmt->accept(*this);
 	}
 }
 
+void
+Visitor::visitInlinedBlockExpr(BlockExprNode *node)
+{
+	this->visitBlockExpr(node);
+}
+
+
 void Visitor::visitMessageExpr(MessageExprNode *node)
 {
+	if (node->selector == "ifTrue:ifFalse:" && node->args[0]->isBlock() && node->args[1]->isBlock())
+	{
+		node->specialKind = MessageExprNode::kIfTrueIfFalse;
+		dynamic_cast<BlockExprNode*>(node->args[0])->isInlined = true;
+		dynamic_cast<BlockExprNode*>(node->args[1])->isInlined = true;
+
+	} 
+
 	node->receiver->accept(*this);
         for (auto & arg: node->args) {
                 arg->accept(*this);
         }
 }
+
+void
+Visitor::visitAssignExpr(AssignExprNode *node)
+{
+	node->left->accept(*this);
+	node->right->accept(*this);
+}
+
 void
 BlockExprNode::print(int in)
 {

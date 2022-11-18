@@ -1,6 +1,8 @@
 nil subclass: Object [
-    tester [
+    tester: someArgument [
         | localVariable |
-        ^ localVariable doSomethingWithBlock: [ localVariable <- 42. localVariable ]
+        localVariable <- 100.
+        someArgument <- 200.
+        ^ [ localVariable doSomethingWithBlock: [ [ localVariable. someArgument <- 42. localVariable ] ] ]
     ]
 ]

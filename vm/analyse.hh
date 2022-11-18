@@ -14,6 +14,7 @@ struct Variable {
 		kArgument,
 		kLocal,
 		kHeapvar,
+		kInlinedBlockLocal,
 	} kind;
 
 	/* 
@@ -25,6 +26,9 @@ struct Variable {
 		kReadRemotely,
 		kWrittenRemotely,
 	} remoteAccess = kNone;
+
+	/* for kind = kInlinedBlockLocal, its true variable */
+	Variable *real = NULL;
 
 	void markRemoteAccess(bool isRemotelyAccessed, bool isWritten);
 };
@@ -44,9 +48,16 @@ class Scope {
 
 	virtual void addLocal(std::string name) { throw 0; }
 	virtual void addArg(std::string name) { throw 0; }
+	virtual void addInlinedBlockLocal(std::string name) { throw 0; }
 	/* remoteAccess should only be set by Scopes themselves. */
 	virtual Variable *lookup(std::string name, bool forWrite = false,
 	    bool remoteAccess = false);
+	/*
+	 * return the real code scope (method or non-inlined block) this scope
+	 * is ultimately associated with
+	 */
+	virtual CodeScope *realScope();
+	bool inOptimisedBlock() { return kind == kOptimisedBlock; }
 };
 
 /*
@@ -55,10 +66,14 @@ class Scope {
 class CodeScope : public Scope {
     public:
 	std::vector<Variable> arguments, locals, heapvars;
+	/* variables from earlier scopes which must be copied in this scope */
+	std::vector<Variable *> copyingVars;
+	/* scopes whose heapvars must be passed to this scope */
 	std::vector<Scope*> usingHeapvarsFrom;
 
 	void addLocal(std::string name);
 	void addArg(std::string name);
+	void addInlinedBlockLocal(std::string name);
 	void moveRemotelyAccessedToHeapvars();
 
 	Variable *lookup(std::string name, bool forWrite = false,
@@ -80,6 +95,7 @@ class AnalysisVisitor : public AST::Visitor {
 	//  void visitReturnStmt(AST::ReturnStmtNode *node);
 	//  void visitExprStmt(AST::ExprStmtNode *node);
 	void visitBlockExpr(AST::BlockExprNode *node);
+	void visitInlinedBlockExpr(AST::BlockExprNode *node);
 	//  void visitCascadeExpr(AST::CascadeExprNode *node);
 	//  void visitMessageExpr(AST::MessageExprNode *node);
 	void visitAssignExpr(AST::AssignExprNode *node);
@@ -97,6 +113,7 @@ class ClosureAnalysisVisitor : public AST::Visitor {
 	void visitLocalDecl(AST::VarDecl &node);
 
 	void visitBlockExpr(AST::BlockExprNode *node);
+	void visitInlinedBlockExpr(AST::BlockExprNode *node);
 	void visitIdentExpr(AST::IdentExprNode *node);
 };
 

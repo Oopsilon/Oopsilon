@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <stdexcept>
 
 #include "analyse.hh"
 #include "ast.hh"
@@ -35,6 +36,8 @@ CodeScope::lookup(std::string name, bool forWrite, bool remoteAccess)
 		}
 	for (auto &local : locals)
 		if (local.name == name) {
+			if (local.kind == Variable::kInlinedBlockLocal)
+				local = *local.real;
 			local.markRemoteAccess(remoteAccess, forWrite);
 			return &local;
 		}
@@ -58,13 +61,40 @@ CodeScope::addLocal(std::string name)
 }
 
 void
+CodeScope::addInlinedBlockLocal(std::string name)
+{
+	assert(kind == kOptimisedBlock);
+	std::string scopeVariableName = "blockLocal" +
+	    std::to_string((uintptr_t)this) + "_" + name;
+	realScope()->addLocal(scopeVariableName);
+	locals.push_back({ name, this, Variable::kInlinedBlockLocal,
+	    Variable::kNone, realScope()->lookup(scopeVariableName) });
+}
+
+void
 CodeScope::moveRemotelyAccessedToHeapvars()
 {
+	for (auto &arg : arguments)
+		if (arg.remoteAccess == Variable::kWrittenRemotely) {
+			heapvars.push_back(
+			    { arg.name, this, Variable::kHeapvar });
+		}
 	for (auto &local : locals)
-		if (local.remoteAccess != Variable::kNone) {
+		if (local.remoteAccess == Variable::kWrittenRemotely) {
 			heapvars.push_back(
 			    { local.name, this, Variable::kHeapvar });
 		}
+}
+
+CodeScope *
+Scope::realScope()
+{
+	CodeScope *cs = dynamic_cast<CodeScope *>(this);
+	assert(this != NULL);
+	if (kind != kOptimisedBlock)
+		return cs;
+	else
+		return outerScope->realScope();
 }
 
 void
@@ -82,7 +112,12 @@ AnalysisVisitor::visitMethod(AST::MethodNode *node)
 void
 AnalysisVisitor::visitParameterDecl(AST::VarDecl &node)
 {
-	scopeStack.top()->addArg(node.name);
+
+	if (scopeStack.top()->inOptimisedBlock())
+		throw std::runtime_error(
+		    "Optimised blocks can't have parameters\n");
+	else
+		scopeStack.top()->addArg(node.name);
 }
 
 void
@@ -90,13 +125,25 @@ AnalysisVisitor::visitLocalDecl(AST::VarDecl &node)
 {
 	std::cout << "add local <" << node.name << ">!\n";
 
-	scopeStack.top()->addLocal(node.name);
+	if (scopeStack.top()->inOptimisedBlock())
+		scopeStack.top()->addInlinedBlockLocal(node.name);
+	else
+		scopeStack.top()->addLocal(node.name);
 }
 
 void
 AnalysisVisitor::visitBlockExpr(AST::BlockExprNode *node)
 {
 	node->scope = new CodeScope(scopeStack.top(), Scope::kBlock);
+	scopeStack.push(node->scope);
+	AST::Visitor::visitBlockExpr(node);
+	scopeStack.pop();
+}
+
+void
+AnalysisVisitor::visitInlinedBlockExpr(AST::BlockExprNode *node)
+{
+	node->scope = new CodeScope(scopeStack.top(), Scope::kOptimisedBlock);
 	scopeStack.push(node->scope);
 	AST::Visitor::visitBlockExpr(node);
 	scopeStack.pop();
@@ -110,11 +157,14 @@ AnalysisVisitor::visitAssignExpr(AST::AssignExprNode *node)
 		std::cerr << "Reference to undeclared name " << node->left->id
 			  << "\n";
 		throw 0;
-	} else if (var->kind == Variable::kArgument) {
+	}
+#if 0
+	else if (var->kind == Variable::kArgument) {
 		std::cerr << "Arguments cannot be assigned to: "
 			  << node->left->id << "\n";
 		throw 0;
 	}
+#endif
 	node->left->variable = var;
 	AST::Visitor::visitAssignExpr(node);
 }
@@ -155,6 +205,15 @@ void
 ClosureAnalysisVisitor::visitBlockExpr(AST::BlockExprNode *node)
 {
 	scope = node->scope;
+	node->scope->moveRemotelyAccessedToHeapvars();
+	AST::Visitor::visitBlockExpr(node);
+	scope = node->scope->outerScope;
+}
+
+void
+ClosureAnalysisVisitor::visitInlinedBlockExpr(AST::BlockExprNode *node)
+{
+	scope = node->scope;
 	AST::Visitor::visitBlockExpr(node);
 	scope = node->scope->outerScope;
 }
@@ -162,6 +221,7 @@ ClosureAnalysisVisitor::visitBlockExpr(AST::BlockExprNode *node)
 void
 ClosureAnalysisVisitor::visitIdentExpr(AST::IdentExprNode *node)
 {
+	std::cout << "ClosureAnalysisisVisitor visiting an ident expression\n";
 	if (node->variable->remoteAccess == Variable::kWrittenRemotely) {
 		node->variable = node->variable->scope->lookup(node->id);
 		assert(node->variable->kind == Variable::kHeapvar);
@@ -176,6 +236,12 @@ ClosureAnalysisVisitor::visitIdentExpr(AST::IdentExprNode *node)
 			CodeScope *codeScope = dynamic_cast<CodeScope *>(
 			    aScope);
 
+#if 0
+			/* nothing to do for these */
+			if (scope->kind == Scope::kOptimisedBlock)
+				continue;
+#endif
+
 			/*
 			 * because the furthest we should be going is up to a
 			 * block scope (methods don't 'use' their own heapvars)
@@ -183,24 +249,49 @@ ClosureAnalysisVisitor::visitIdentExpr(AST::IdentExprNode *node)
 			assert(codeScope != NULL);
 
 			/*
-                         * if an intervening scope doesn't use the heapvars, add
+			 * if an intervening scope doesn't use the heapvars, add
 			 * them
-                         */
+			 */
 			if (std::find(codeScope->usingHeapvarsFrom.begin(),
 				codeScope->usingHeapvarsFrom.end(),
 				node->variable->scope) ==
 			    codeScope->usingHeapvarsFrom.end()) {
 				codeScope->usingHeapvarsFrom.push_back(
 				    node->variable->scope);
-                            }
+			}
+		}
+	} else if (node->variable->remoteAccess == Variable::kReadRemotely) {
+		/*
+		 * make sure the defining scope's copieds are carried all
+		 * the way up to this scope. factoring candidate??
+		 */
+		for (auto aScope = scope; aScope != node->variable->scope;
+		     aScope = aScope->outerScope) {
+			// TODO: refactor!
+			CodeScope *codeScope = dynamic_cast<CodeScope *>(
+			    aScope);
 
-                            // the usingheapvarsfrom tells us what to pass in
-                            // arguments to a block when creating it
+#if 0
+			if (scope->kind == Scope::kOptimisedBlock)
+				continue;
+#endif
 
-                            // we can just give each method/block's own heapvars
-                            // its own name,
+			/*
+			 * because the furthest we should be going is up to a
+			 * block scope (methods don't 'use' their own heapvars)
+			 */
+			assert(codeScope != NULL);
 
-                            // then we can just load them up
+			/*
+			 * if an intervening scope doesn't use the heapvars, add
+			 * them
+			 */
+			if (std::find(codeScope->copyingVars.begin(),
+				codeScope->copyingVars.end(), node->variable) ==
+			    codeScope->copyingVars.end()) {
+				codeScope->copyingVars.push_back(
+				    node->variable);
+			}
 		}
 	}
 }

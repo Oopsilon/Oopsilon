@@ -106,9 +106,10 @@ class Visitor {
 	virtual void visitBlockLocalReturn(ExprNode *node);
 	virtual void visitExprStmt(ExprStmtNode *node);
 	virtual void visitBlockExpr(BlockExprNode *node);
+	virtual void visitInlinedBlockExpr(BlockExprNode *node);
 	virtual void visitCascadeExpr(CascadeExprNode *node) {}
 	virtual void visitMessageExpr(MessageExprNode *node);
-	virtual void visitAssignExpr(AssignExprNode *node) {}
+	virtual void visitAssignExpr(AssignExprNode *node);
 	virtual void visitIdentExpr(IdentExprNode *node) {}
 	virtual void visitIntExpr(IntExprNode *node) {}
 };
@@ -179,9 +180,10 @@ class ExprNode : public Node {
 	ExprNode(Position pos)
 	    : Node(pos) {};
 
-	virtual bool isIdent() { return false; }
-	virtual bool isSuper() { return false; }
-	virtual bool isSelf() { return false; }
+	virtual bool isIdent() { return false; };
+	virtual bool isSuper() { return false; };
+	virtual bool isSelf() { return false; };
+	virtual bool isBlock() { return false; };
 };
 
 /*
@@ -299,6 +301,12 @@ struct MessageExprNode : ExprNode {
 	std::string selector;
 	std::vector<ExprNode *> args;
 
+	/* semantic analysis */
+	enum SpecialKind {
+		kNotSpecial,
+		kIfTrueIfFalse,
+	} specialKind;
+
 	MessageExprNode(ExprNode *receiver, std::string selector,
 	    std::vector<ExprNode *> args = {})
 	    : ExprNode(receiver->m_pos)
@@ -348,6 +356,7 @@ class BlockExprNode : public ExprNode {
 
 	/* semantic analysis */
 	CodeScope * scope;
+	bool isInlined = false;
 
 	BlockExprNode(std::vector<VarDecl> args, std::vector<VarDecl> locals,
 	    std::vector<StmtNode *> stmts)
@@ -358,10 +367,17 @@ class BlockExprNode : public ExprNode {
 	{
 	}
 
-	void accept(Visitor &visitor) { visitor.visitBlockExpr(this); }
+	void accept(Visitor &visitor)
+	{
+		if (isInlined)
+			visitor.visitInlinedBlockExpr(this);
+		else
+			visitor.visitBlockExpr(this);
+	}
 	void print(int in);
 
 	bool isSelf(); /**< in case inlined */
+	bool isBlock() { return true; }
 };
 
 struct ExprStmtNode : public StmtNode {
