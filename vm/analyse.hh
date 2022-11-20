@@ -48,7 +48,7 @@ class Scope {
 
 	virtual void addLocal(std::string name) { throw 0; }
 	virtual void addArg(std::string name) { throw 0; }
-	virtual void addInlinedBlockLocal(std::string name) { throw 0; }
+	virtual void addInlinedBlockLocal(std::string name, bool isArg = false) { throw 0; }
 	/* remoteAccess should only be set by Scopes themselves. */
 	virtual Variable *lookup(std::string name, bool forWrite = false,
 	    bool remoteAccess = false);
@@ -73,7 +73,7 @@ class CodeScope : public Scope {
 
 	void addLocal(std::string name);
 	void addArg(std::string name);
-	void addInlinedBlockLocal(std::string name);
+	void addInlinedBlockLocal(std::string name, bool isArg);
 	void moveRemotelyAccessedToHeapvars();
 
 	Variable *lookup(std::string name, bool forWrite = false,
@@ -97,7 +97,7 @@ class AnalysisVisitor : public AST::Visitor {
 	void visitBlockExpr(AST::BlockExprNode *node);
 	void visitInlinedBlockExpr(AST::BlockExprNode *node);
 	//  void visitCascadeExpr(AST::CascadeExprNode *node);
-	//  void visitMessageExpr(AST::MessageExprNode *node);
+	void visitMessageExpr(AST::MessageExprNode *node);
 	void visitAssignExpr(AST::AssignExprNode *node);
 	void visitIdentExpr(AST::IdentExprNode *node);
 	//  void visitIntExpr(AST::IntExprNode *node);

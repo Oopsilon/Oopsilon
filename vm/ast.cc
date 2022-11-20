@@ -74,14 +74,6 @@ Visitor::visitInlinedBlockExpr(BlockExprNode *node)
 
 void Visitor::visitMessageExpr(MessageExprNode *node)
 {
-	if (node->selector == "ifTrue:ifFalse:" && node->args[0]->isBlock() && node->args[1]->isBlock())
-	{
-		node->specialKind = MessageExprNode::kIfTrueIfFalse;
-		dynamic_cast<BlockExprNode*>(node->args[0])->isInlined = true;
-		dynamic_cast<BlockExprNode*>(node->args[1])->isInlined = true;
-
-	} 
-
 	node->receiver->accept(*this);
         for (auto & arg: node->args) {
                 arg->accept(*this);

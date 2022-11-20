@@ -213,6 +213,35 @@ CodeGeneratorVisitor::visitMessageExpr(AST::MessageExprNode *node)
 		node->args[1]->accept(*this);
 		fun() << ")";
 		return;
+	} else if (node->specialKind == AST::MessageExprNode::kToDo) {
+		AST::BlockExprNode *block = dynamic_cast<AST::BlockExprNode *>(
+		    node->args[1]);
+
+		assert(block != NULL);
+
+		fun() << "({"
+			 "\n\toop __result = nil;"
+			 "\n\toop __counter = ";
+		node->receiver->accept(*this);
+		fun() << ";"
+			 "\n\toop __comparator = ";
+		node->args[0]->accept(*this);
+		fun() << ";"
+			 "\n\tfor(; smiIsLessThan(__counter, __comparator); "
+			 "__counter = smiAdd(__counter, 1)) {\n\t";
+
+		/* assign the counter's value to the block's first argument */
+		emitVariableAccess(scope.top(), &block->scope->arguments[0],
+		    fun());
+		fun() << " = __counter;\n\t";
+
+		/* emit block body, assigned to __result */
+		fun() << "__result = ";
+		block->accept(*this);
+		fun() << ";\n\t}"
+			 "\n\t__result;"
+			 "\n})\n";
+		return;
 	}
 
 plain:

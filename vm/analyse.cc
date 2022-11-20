@@ -61,14 +61,15 @@ CodeScope::addLocal(std::string name)
 }
 
 void
-CodeScope::addInlinedBlockLocal(std::string name)
+CodeScope::addInlinedBlockLocal(std::string name, bool isArg)
 {
 	assert(kind == kOptimisedBlock);
 	std::string scopeVariableName = "blockLocal" +
 	    std::to_string((uintptr_t)this) + "_" + name;
 	realScope()->addLocal(scopeVariableName);
-	locals.push_back({ name, this, Variable::kInlinedBlockLocal,
-	    Variable::kNone, realScope()->lookup(scopeVariableName) });
+	(isArg ? arguments : locals)
+	    .push_back({ name, this, Variable::kInlinedBlockLocal,
+		Variable::kNone, realScope()->lookup(scopeVariableName) });
 }
 
 void
@@ -112,10 +113,8 @@ AnalysisVisitor::visitMethod(AST::MethodNode *node)
 void
 AnalysisVisitor::visitParameterDecl(AST::VarDecl &node)
 {
-
 	if (scopeStack.top()->inOptimisedBlock())
-		throw std::runtime_error(
-		    "Optimised blocks can't have parameters\n");
+		scopeStack.top()->addInlinedBlockLocal(node.name, true);
 	else
 		scopeStack.top()->addArg(node.name);
 }
@@ -147,6 +146,24 @@ AnalysisVisitor::visitInlinedBlockExpr(AST::BlockExprNode *node)
 	scopeStack.push(node->scope);
 	AST::Visitor::visitBlockExpr(node);
 	scopeStack.pop();
+}
+
+void
+AnalysisVisitor::visitMessageExpr(AST::MessageExprNode *node)
+{
+	if (node->selector == "ifTrue:ifFalse:" && node->args[0]->isBlock() &&
+	    node->args[1]->isBlock()) {
+		node->specialKind = AST::MessageExprNode::kIfTrueIfFalse;
+		dynamic_cast<AST::BlockExprNode *>(node->args[0])->isInlined =
+		    true;
+		dynamic_cast<AST::BlockExprNode *>(node->args[1])->isInlined =
+		    true;
+	} else if (node->selector == "to:do:" && node->args[1]->isBlock()) {
+		node->specialKind = AST::MessageExprNode::kToDo;
+		dynamic_cast<AST::BlockExprNode *>(node->args[1])->isInlined =
+		    true;
+	}
+	AST::Visitor::visitMessageExpr(node);
 }
 
 void

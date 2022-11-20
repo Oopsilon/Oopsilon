@@ -304,7 +304,13 @@ struct MessageExprNode : ExprNode {
 	/* semantic analysis */
 	enum SpecialKind {
 		kNotSpecial,
+		/* <id>Boolean>>#ifTrue: [^id] ifFalse: [^id]*/
 		kIfTrueIfFalse,
+		/*
+		 * <id>SmallInteger>>#to:<SmallInteger>
+		 * 	do:<[ ^id, :<SmallInteger> ]
+		 */
+		kToDo,
 	} specialKind;
 
 	MessageExprNode(ExprNode *receiver, std::string selector,
