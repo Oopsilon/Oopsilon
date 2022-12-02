@@ -6,6 +6,28 @@
 #include "analyse.hh"
 #include "ast.hh"
 
+NamespaceScope rootScope("", NULL);
+NamespaceScope smalltalkScope("Smalltalk", &rootScope);
+
+/*
+ * registration
+ */
+void
+RegistrarVisitor::visitClass(AST::ClassNode *node)
+{
+	smalltalkScope.addClass(node);
+}
+
+void
+NamespaceScope::addClass(AST::ClassNode *klass)
+{
+	members.emplace_back(NamespaceMemberVariable(klass->m_name, klass));
+}
+
+/*
+ * analysis proper
+ */
+
 Variable *
 Scope::lookup(std::string name, bool forWrite, bool remoteAccess)
 {
@@ -41,10 +63,14 @@ CodeScope::lookup(std::string name, bool forWrite, bool remoteAccess)
 			local.markRemoteAccess(remoteAccess, forWrite);
 			return &local;
 		}
-	if (outerScope == NULL)
+	if (lexicalOuter == NULL) {
+		assert(kind == kMethod);
+		if (name == "self") {
+			return NULL;
+		}
 		return NULL;
-	else
-		return outerScope->lookup(name, forWrite,
+	} else
+		return lexicalOuter->lookup(name, forWrite,
 		    remoteAccess ? remoteAccess : kind == kBlock);
 }
 
@@ -95,12 +121,24 @@ Scope::realScope()
 	if (kind != kOptimisedBlock)
 		return cs;
 	else
-		return outerScope->realScope();
+		return lexicalOuter->realScope();
+}
+
+void
+AnalysisVisitor::visitClass(AST::ClassNode *node)
+{
+	methodClass = node;
+	node->m_classScope = new InstanceScope(node);
+	node->m_instanceScope = new InstanceScope(node);
+
+	for (auto &ivar : node->m_instanceVars) {
+	}
 }
 
 void
 AnalysisVisitor::visitMethod(AST::MethodNode *node)
 {
+	method = node;
 	node->scope = new CodeScope(NULL, Scope::kMethod);
 	scopeStack.push(node->scope);
 	AST::Visitor::visitMethod(node);
@@ -191,6 +229,9 @@ AnalysisVisitor::visitIdentExpr(AST::IdentExprNode *node)
 {
 	auto var = scopeStack.top()->lookup(node->id);
 	if (!var) {
+		// if ()
+	}
+	if (!var) {
 		std::cerr << "Reference to undeclared name " << node->id
 			  << "\n";
 		throw 0;
@@ -205,26 +246,44 @@ ClosureAnalysisVisitor::visitMethod(AST::MethodNode *node)
 	scope = node->scope;
 	node->scope->moveRemotelyAccessedToHeapvars();
 	AST::Visitor::visitMethod(node);
-	scope = node->scope->outerScope;
+	scope = node->scope->lexicalOuter;
 }
 
 void
-ClosureAnalysisVisitor::visitParameterDecl(AST::VarDecl &node)
+ClosureAnalysisVisitor::visitReturnStmt(AST::ReturnStmtNode *node)
 {
-}
+	bool isNLR = false;
 
-void
-ClosureAnalysisVisitor::visitLocalDecl(AST::VarDecl &node)
-{
+	std::cout << "ClosureAnalysisVisitor visiting a return statement.\n";
+
+	if (scope->kind != Scope::kMethod) {
+		std::cout << "Checking for NLR.\n";
+		auto aScope = scope;
+		do {
+			std::cout << "aScope kind is: " << aScope->kind << "\n";
+			if (aScope->kind == Scope::kBlock)
+				isNLR = true;
+			else if (aScope->kind == Scope::kMethod && isNLR)
+				aScope->needsHeapContext = true;
+		} while ((aScope = aScope->lexicalOuter) != NULL);
+	}
+
+	node->isNonLocalReturn = isNLR;
+	if (isNLR)
+		printf("Nonlocalreturn found!\n");
+	AST::Visitor::visitReturnStmt(node);
 }
 
 void
 ClosureAnalysisVisitor::visitBlockExpr(AST::BlockExprNode *node)
 {
+	std::cout << "Entering block expression.\n";
 	scope = node->scope;
+	std::cout << "Scope kind: " << scope->kind << "\n";
 	node->scope->moveRemotelyAccessedToHeapvars();
 	AST::Visitor::visitBlockExpr(node);
-	scope = node->scope->outerScope;
+	scope = node->scope->lexicalOuter;
+	std::cout << "Exiting block expression.\n";
 }
 
 void
@@ -232,7 +291,7 @@ ClosureAnalysisVisitor::visitInlinedBlockExpr(AST::BlockExprNode *node)
 {
 	scope = node->scope;
 	AST::Visitor::visitBlockExpr(node);
-	scope = node->scope->outerScope;
+	scope = node->scope->lexicalOuter;
 }
 
 void
@@ -248,7 +307,7 @@ ClosureAnalysisVisitor::visitIdentExpr(AST::IdentExprNode *node)
 		 * the way up to this scope. factoring candidate??
 		 */
 		for (auto aScope = scope; aScope != node->variable->scope;
-		     aScope = aScope->outerScope) {
+		     aScope = aScope->lexicalOuter) {
 			// TODO: refactor!
 			CodeScope *codeScope = dynamic_cast<CodeScope *>(
 			    aScope);
@@ -283,7 +342,7 @@ ClosureAnalysisVisitor::visitIdentExpr(AST::IdentExprNode *node)
 		 * the way up to this scope. factoring candidate??
 		 */
 		for (auto aScope = scope; aScope != node->variable->scope;
-		     aScope = aScope->outerScope) {
+		     aScope = aScope->lexicalOuter) {
 			// TODO: refactor!
 			CodeScope *codeScope = dynamic_cast<CodeScope *>(
 			    aScope);

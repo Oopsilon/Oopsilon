@@ -6,6 +6,7 @@
 #include <typeinfo>
 #include <vector>
 
+class InstanceScope;
 class CodeScope;
 class Variable;
 
@@ -401,6 +402,7 @@ struct ExprStmtNode : public StmtNode {
 
 struct ReturnStmtNode : public StmtNode {
 	ExprNode *expr;
+	bool isNonLocalReturn = false;
 
 	ReturnStmtNode(ExprNode *e)
 	    : StmtNode(e->m_pos)
@@ -451,6 +453,16 @@ class ClassNode : public DeclNode {
 	std::vector<MethodNode*> m_instanceMethods;
 	std::vector<MethodNode*> m_classMethods;
 
+	/* -- decorations after semantic analysis -- */
+	/* The superclass node, if there is one. */
+	ClassNode * m_superClass;
+
+	InstanceScope * m_classScope,*  m_instanceScope;
+
+#if 0
+	/* All instance variables, including those inherited. */
+	std::vector<VarDecl*> m_allInstanceVariables;
+#endif
 
 	ClassNode(std::string name, std::string superName,
 	    std::vector<VarDecl> instanceVars, std::vector<VarDecl> classVars)

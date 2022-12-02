@@ -1,5 +1,6 @@
 #include <cassert>
 #include <iostream>
+#include <sstream>
 
 #include "analyse.hh"
 #include "ast.hh"
@@ -12,8 +13,8 @@ generateScopeName(Scope *scope, std::string &name)
 		name.insert(0, "M");
 	else if (scope->kind == Scope::kBlock)
 		name.insert(0, "B");
-	if (scope->outerScope != NULL)
-		return generateScopeName(scope->outerScope, name);
+	if (scope->lexicalOuter != NULL)
+		return generateScopeName(scope->lexicalOuter, name);
 }
 
 bool
@@ -23,10 +24,16 @@ useCrossesBlock(Scope *useScope, Scope *defScope)
 		/* does this work for optimised blocks??? i think it does? */
 		if (useScope->kind == Scope::kBlock)
 			return true;
-		useScope = useScope->outerScope;
+		useScope = useScope->lexicalOuter;
 		assert(useScope != NULL);
 	}
 	return false;
+}
+
+std::string
+CodeGeneratorVisitor::blockName(AST::BlockExprNode *node)
+{
+	return "block" + std::to_string(uintptr_t(node));
 }
 
 std::string &
@@ -47,6 +54,47 @@ CodeGeneratorVisitor::heapvarsNameForScope(Scope *scope)
 }
 
 void
+CodeGeneratorVisitor::genContextType(std::string structName, CodeScope *scope)
+{
+	types << "struct " << structName << "_context {\n";
+	std::string heapVarsName = (scope->heapvars.empty() ?
+		"__unused__" :
+		heapvarsNameForScope(scope));
+	types << "/* my heapvar vector */\n"
+	      << "  struct " << heapVarsName << " *" << heapVarsName << ";\n";
+
+	if (scope->kind == Scope::kBlock) {
+		/* skip this, we're going to access the blockClosure's stuff
+		 * instead */
+#if 0
+		types << "/* imported heapvar vectors */\n";
+		for (auto &scope : scope->usingHeapvarsFrom) {
+			types << "  struct " << heapvarsNameForScope(scope)
+			      << " *" << heapvarsNameForScope(scope) << ";\n";
+		}
+		types << "/* copied vars */\n";
+		for (auto &var : scope->copyingVars)
+			types << "  oop " << nameForScope(var->scope)
+			      << var->name << ";\n";
+#endif
+		types << "  struct " << structName << " *"
+		      << "thisBlock;\n";
+	}
+
+	types << "/* non-heapvar'd arguments */\n";
+	for (auto &var : scope->arguments)
+		if (var.remoteAccess != Variable::kWrittenRemotely)
+			types << "  oop " << nameForScope(scope) << var.name
+			      << ";\n";
+	types << "/* non-heapvar'd locals */\n";
+	for (auto &var : scope->locals)
+		if (var.remoteAccess != Variable::kWrittenRemotely)
+			types << "  oop " << nameForScope(scope) << var.name
+			      << ";\n";
+	types << "};\n\n";
+}
+
+void
 CodeGeneratorVisitor::genHeapvarsType(CodeScope *scope)
 {
 	if (!scope->heapvars.empty()) {
@@ -61,14 +109,40 @@ void
 CodeGeneratorVisitor::genMoveArgumentsToHeapvars(CodeScope *scope,
     std::stringstream &stream)
 {
+	bool didMoveAny = false;
 	for (auto &arg : scope->arguments)
 		if (arg.remoteAccess == Variable::kWrittenRemotely) {
-			stream << heapvarsNameForScope(scope) << "->";
-			emitVariableAccess(scope, &arg, stream);
+			stream << "  " << heapvarsNameForScope(scope) << "->";
+			emitVariableAccess(scope, &arg, stream, true);
 			stream << " = ";
-			emitVariableAccess(scope, &arg, stream);
+			emitVariableAccess(scope, &arg, stream, true);
 			stream << ";\n";
+			didMoveAny = true;
 		}
+	if (didMoveAny)
+		stream << "\n";
+}
+
+void
+CodeGeneratorVisitor::genContextCreation(CodeScope *scope,
+    std::string structName, std::stringstream &stream)
+{
+	fun() << "  volatile struct " << structName << " *thisContext";
+	if (!scope->needsHeapContext) {
+		fun() << ";\n  struct " << structName << " __context;\n";
+		fun() << "  thisContext = &__context;\n";
+	} else {
+		fun() << " = allocOopsObj(sizeof(struct " << structName
+		      << "));\n";
+	}
+
+	if (!scope->heapvars.empty()) {
+		fun() << "  struct " << heapvarsNameForScope(scope) << " *"
+		      << heapvarsNameForScope(scope);
+		fun() << " = allocOopsObj(sizeof(struct "
+		      << heapvarsNameForScope(scope) << "));\n";
+	}
+	fun() << "\n";
 }
 
 void
@@ -84,14 +158,45 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 	std::cout << "Visiting method called " << node->m_selector << "\n";
 
 	genHeapvarsType(node->scope);
+	genContextType("M", node->scope);
 
-	/* method body */
 	scope.push(node->scope);
 	funStack.push({});
-	std::cout << "void method()\n{\n";
+
+	/* method function signature */
+	fun() << "void method()\n{\n";
+
+	/* method body */
+#if 0
+	fun() << "  oop __retVal = self;\n";
+#endif
+	genContextCreation(node->scope, "M_context", fun());
 	genMoveArgumentsToHeapvars(node->scope, fun());
+
+	if (node->scope->needsHeapContext) {
+		fun()
+		    << "  if (oops_setjmp(thisContext->returnBuf) != 0) {"
+		       "\n    if(thisContext->flags & kContextShouldReturn)"
+		       "\n      return oops_return(thisContext, thisContext->retval);"
+		       "\n  }\n\n";
+	}
+#if 0
+	} else
+		fun() << "  if (0) {\n";
+
+	fun() << "__doReturn:"
+		 "\n    // set thread context to sender..."
+		 "\n    oops_markContextReturned(thisContext);"
+		 "\n    return __retVal;"
+		 "\n  }\n\n";
+#else
+
+#endif
+	fun() << "/* code */\n";
 	AST::Visitor::visitMethod(node);
-	std::cout << "}\n";
+
+	/* end of method */
+	fun() << "}\n";
 	funcs.push_back(fun().str());
 	funStack.pop();
 	scope.pop();
@@ -107,20 +212,38 @@ void
 CodeGeneratorVisitor::visitReturnStmt(AST::ReturnStmtNode *node)
 {
 	std::cout << "Visiting return stmt\n";
-	/* need to handle block return case?? */
-	fun() << "return ";
+	if (node->isNonLocalReturn)
+		fun() << "return oops_nonLocalReturn(thisContext, ";
+	else
+		fun() << "return oops_return(thisContext, ";
 	AST::Visitor::visitReturnStmt(node);
-	fun() << ";\n";
+	fun() << ");\n";
 }
 
 void
 CodeGeneratorVisitor::visitBlockLocalReturn(AST::ExprNode *node)
 {
 	std::cout << "Visiting block local return stmt\n";
-	if (!scope.top()->inOptimisedBlock())
-		fun() << "return ";
-	AST::Visitor::visitBlockLocalReturn(node);
-	fun() << ";\n";
+
+	if (!scope.top()->inOptimisedBlock()) {
+#if 0
+		fun() << "retVal = ";
+		AST::Visitor::visitBlockLocalReturn(node);
+		fun() << ";\n";
+		fun() << "goto __return;\n";
+#endif
+		/* this is return from a true block */
+		fun() << "return oops_return(thisContext, ";
+		AST::Visitor::visitBlockLocalReturn(node);
+		fun() << ");\n";
+	} else {
+		/*
+		 * emit it as the last expression-statement of the
+		 * statement expression
+		 */
+		AST::Visitor::visitBlockLocalReturn(node);
+		fun() << ";\n";
+	}
 }
 
 void
@@ -137,10 +260,13 @@ CodeGeneratorVisitor::visitBlockExpr(AST::BlockExprNode *node)
 	genHeapvarsType(node->scope);
 
 	/* block type */
-	types << "struct block" << (intptr_t)node << "{\n";
-	types << "/* heapvars */\n";
-	for (auto &scope : node->scope->usingHeapvarsFrom)
-		types << "  oop " << nameForScope(scope) << "_heapvars;\n";
+	types << "struct block" << (uintptr_t)node << "{\n";
+	types << "/* imported heapvar vectors */\n";
+	// TODO: factoring 1?
+	for (auto &scope : node->scope->usingHeapvarsFrom) {
+		types << "  struct " << heapvarsNameForScope(scope) << " *"
+		      << heapvarsNameForScope(scope) << ";\n";
+	}
 	types << "/* copied vars */\n";
 	for (auto &var : node->scope->copyingVars)
 		types << "  oop " << nameForScope(var->scope) << var->name
@@ -148,23 +274,44 @@ CodeGeneratorVisitor::visitBlockExpr(AST::BlockExprNode *node)
 	types << "};\n\n";
 
 	/* block context type */
+	genContextType(blockName(node), node->scope);
 
 	/* the function to make the block */
 	types << "makeBlock" << (intptr_t)node << "(oop self";
-	/* heapvar structs */
+	/* heapvar vector arguments */
 	for (auto &scope : node->scope->usingHeapvarsFrom)
-		types << ", struct " << heapvarsNameForScope(scope) << " "
+		types << ", struct " << heapvarsNameForScope(scope) << " *"
 		      << heapvarsNameForScope(scope);
-	/* copied variables*/
+	/* copied variable parameters */
 	for (auto &var : node->scope->copyingVars)
 		types << ", oop " << nameForScope(var->scope) << var->name;
-	types << ")\n{\n}\n\n";
+	types << ")\n{\n";
+	/* body */
+	types << "  newBlock = allocOopsObj(sizeof(struct block"
+	      << (uintptr_t)node << ") / sizeof(Oop));\n";
+	/* heapvar vectors assignment */
+	for (auto &scope : node->scope->usingHeapvarsFrom)
+		types << "  newBlock->" << heapvarsNameForScope(scope) << " = "
+		      << heapvarsNameForScope(scope) << ";\n";
+	/* copied variables assignment */
+	for (auto &var : node->scope->copyingVars) {
+		std::string name = nameForScope(var->scope) + var->name;
+		types << "  newBlock->" << name << " = " << name << ";\n";
+	}
+	types << "  return newBlock;\n";
+	types << "}\n\n";
 
 	/* block code */
 	funStack.push({});
 	scope.push(node->scope);
 	fun() << "static void block" << (uintptr_t)node << "()\n{\n";
+
+	genContextCreation(node->scope,
+	    "block" + std::to_string((uintptr_t)node), fun());
 	genMoveArgumentsToHeapvars(node->scope, fun());
+
+	fun() << "/* code */\n";
+
 	AST::Visitor::visitBlockExpr(node);
 	fun() << "}\n";
 	funcs.push_back(fun().str());
@@ -230,7 +377,8 @@ CodeGeneratorVisitor::visitMessageExpr(AST::MessageExprNode *node)
 			 "\n\tfor(; smiIsLessThan(__counter, __comparator); "
 			 "__counter = smiAdd(__counter, 1)) {\n\t";
 
-		/* assign the counter's value to the block's first argument */
+		/* assign the counter's value to the block's first
+		 * argument */
 		emitVariableAccess(scope.top(), &block->scope->arguments[0],
 		    fun());
 		fun() << " = __counter;\n\t";
@@ -270,7 +418,7 @@ CodeGeneratorVisitor::visitAssignExpr(AST::AssignExprNode *node)
 
 void
 CodeGeneratorVisitor::emitVariableAccess(Scope *scope, Variable *var,
-    std::stringstream &stream)
+    std::stringstream &stream, bool elideThisContext)
 {
 	switch (var->kind) {
 	case Variable::kArgument:
@@ -278,6 +426,10 @@ CodeGeneratorVisitor::emitVariableAccess(Scope *scope, Variable *var,
 	case Variable::kHeapvar: {
 		if (useCrossesBlock(scope, var->scope))
 			stream << "thisBlock->";
+		else if (!elideThisContext && var->kind != Variable::kHeapvar)
+			/* no need access thru thisContext for own
+			 * heapvars */
+			stream << "thisContext->";
 
 		if (var->kind == Variable::kHeapvar)
 			stream << heapvarsNameForScope(var->scope) << "->";

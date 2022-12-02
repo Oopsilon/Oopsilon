@@ -1,3 +1,8 @@
+/*!
+ * Analysis leading to code generation. (there will probably be a separate
+ * analyser for type checking?)
+ */
+
 #ifndef ANALYSE_H_
 #define ANALYSE_H_
 
@@ -5,7 +10,8 @@
 
 #include "ast.hh"
 
-struct Scope;
+class Scope;
+class InstanceScope;
 
 struct Variable {
 	std::string name;
@@ -15,9 +21,16 @@ struct Variable {
 		kLocal,
 		kHeapvar,
 		kInlinedBlockLocal,
+
+		kInstanceVariable,
+
+		kNamespaceMember,
+
+		/* pseudos */
+		kSelf,
 	} kind;
 
-	/* 
+	/*
 	 * for local/argument, read remoetly?
 	 * (i.e. at least one unoptimised block context in between)?
 	 */
@@ -33,31 +46,101 @@ struct Variable {
 	void markRemoteAccess(bool isRemotelyAccessed, bool isWritten);
 };
 
+struct InstanceVariable : public Variable {
+	/* index, 0-based */
+	size_t index;
+
+	InstanceVariable(InstanceScope *scope, size_t index)
+	    : index(index)
+	{
+		scope = scope;
+	};
+};
+
+class NamespaceMemberVariable : public Variable {
+	/*
+	 * Node instantiating it, if applicable. Either a ClassNode or a
+	 * SharedVariableDeclNode.
+	 */
+	AST::Node *node;
+
+public:
+	NamespaceMemberVariable(std::string aName, AST::Node *node)
+	    : node(node)
+	{
+		name = aName;
+		kind = kNamespaceMember;
+	}
+
+	AST::ClassNode*klass() { return dynamic_cast<AST::ClassNode *>(node) ; }
+	bool isClass() { return klass() != NULL; };
+};
+
 class Scope {
     public:
 	enum Kind {
 		kMethod,
 		kBlock,
 		kOptimisedBlock,
+		kClass,
+		kNamespace,
 	} kind;
-	Scope *outerScope;
+	Scope *lexicalOuter;
 
 	Scope(Scope *outerScope, Kind kind)
-	    : outerScope(outerScope)
+	    : lexicalOuter(outerScope)
 	    , kind(kind) {};
+
+	/* only for kMethod scopes. whether a heap context is needed. */
+	bool needsHeapContext = false;
 
 	virtual void addLocal(std::string name) { throw 0; }
 	virtual void addArg(std::string name) { throw 0; }
-	virtual void addInlinedBlockLocal(std::string name, bool isArg = false) { throw 0; }
+	virtual void addInlinedBlockLocal(std::string name, bool isArg = false)
+	{
+		throw 0;
+	}
 	/* remoteAccess should only be set by Scopes themselves. */
 	virtual Variable *lookup(std::string name, bool forWrite = false,
 	    bool remoteAccess = false);
+
 	/*
 	 * return the real code scope (method or non-inlined block) this scope
 	 * is ultimately associated with
 	 */
 	virtual CodeScope *realScope();
 	bool inOptimisedBlock() { return kind == kOptimisedBlock; }
+};
+
+/*
+ * Instance scope. There's two per class: one is the scope of instance methods,
+ * the other of class methods.
+ */
+class InstanceScope : public Scope {
+    public:
+	AST::ClassNode *cls;
+	std::vector<Variable> instanceVars;
+
+	InstanceScope(AST::ClassNode *cls)
+	    : cls(cls)
+	    , Scope(NULL, kClass) {};
+};
+
+/*
+ * A namespace scope. Namespaces serve the purpose of both
+ */
+class NamespaceScope : public Scope {
+	std::string name;
+	NamespaceScope *parent;
+	std::vector<Variable> members;
+
+    public:
+	NamespaceScope(std::string name, NamespaceScope *parent)
+	    : name(name)
+	    , parent(parent)
+	    , Scope(NULL, kNamespace) {};
+
+	void addClass(AST::ClassNode *klass);
 };
 
 /*
@@ -69,7 +152,9 @@ class CodeScope : public Scope {
 	/* variables from earlier scopes which must be copied in this scope */
 	std::vector<Variable *> copyingVars;
 	/* scopes whose heapvars must be passed to this scope */
-	std::vector<Scope*> usingHeapvarsFrom;
+	std::vector<Scope *> usingHeapvarsFrom;
+	/* if this is a kMethod scope, the class in which the method is found */
+	AST::ClassNode *klass;
 
 	void addLocal(std::string name);
 	void addArg(std::string name);
@@ -79,14 +164,24 @@ class CodeScope : public Scope {
 	Variable *lookup(std::string name, bool forWrite = false,
 	    bool remoteAccess = false);
 
-	CodeScope(Scope *outerScope, Kind kind)
+	/*
+	 * Create a new CodeScope; if it is a method scope, then klass should be
+	 * given the defining class.
+	 */
+	CodeScope(Scope *outerScope, Kind kind, AST::ClassNode *klass = NULL)
 	    : Scope(outerScope, kind) {};
 };
 
+class RegistrarVisitor : public AST::Visitor {
+	void visitClass(AST::ClassNode *node);
+};
+
 class AnalysisVisitor : public AST::Visitor {
+	AST::ClassNode *methodClass;
+	AST::MethodNode *method;
 	std::stack<Scope *> scopeStack;
 
-	// void visitClass(AST::ClassNode *node);
+	void visitClass(AST::ClassNode *node);
 	void visitMethod(AST::MethodNode *node);
 
 	void visitParameterDecl(AST::VarDecl &node);
@@ -109,8 +204,7 @@ class ClosureAnalysisVisitor : public AST::Visitor {
 
 	void visitMethod(AST::MethodNode *node);
 
-	void visitParameterDecl(AST::VarDecl &node);
-	void visitLocalDecl(AST::VarDecl &node);
+	void visitReturnStmt(AST::ReturnStmtNode *node);
 
 	void visitBlockExpr(AST::BlockExprNode *node);
 	void visitInlinedBlockExpr(AST::BlockExprNode *node);
