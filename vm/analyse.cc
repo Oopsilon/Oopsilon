@@ -1,10 +1,13 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <list>
 #include <stdexcept>
 
 #include "analyse.hh"
 #include "ast.hh"
+
+using compile_error = std::runtime_error;
 
 NamespaceScope rootScope("", NULL);
 NamespaceScope smalltalkScope("Smalltalk", &rootScope);
@@ -24,6 +27,40 @@ NamespaceScope::addClass(AST::ClassNode *klass)
 	members.emplace_back(NamespaceMemberVariable(klass->m_name, klass));
 }
 
+NamespaceMemberVariable *
+NamespaceScope::lookup(std::string name, bool forWrite, bool remoteAccess)
+{
+	for (auto &member : members) {
+		if (member.name == name)
+			return &member;
+	}
+
+	return NULL;
+}
+
+/*
+ * linkup
+ */
+void
+LinkupVisitor::visitClass(AST::ClassNode *node)
+{
+	if (node->m_superName == "nil")
+		return;
+
+	auto super = smalltalkScope.lookup(node->m_superName);
+	if (!super) {
+		throw std::runtime_error(
+		    "Couldn't find class named " + node->m_superName);
+	}
+
+	if (!super->isClass()) {
+		throw compile_error("Class " + node->m_name + ": Superclass " +
+		    node->m_superName + " is not a class");
+	}
+
+	node->m_superClass = super->klass();
+}
+
 /*
  * analysis proper
  */
@@ -32,6 +69,30 @@ Variable *
 Scope::lookup(std::string name, bool forWrite, bool remoteAccess)
 {
 	return NULL;
+}
+
+void
+InstanceScope::addIvar(std::string name, int index)
+{
+	instanceVars.emplace_back(InstanceVariable(name, index, this));
+}
+
+Variable *
+InstanceScope::lookup(std::string name, bool forWrite, bool remoteAccess)
+{
+	if (name == "self") {
+		return &selfVar;
+	}
+
+	for (auto &ivar : instanceVars) {
+		if (ivar.name == name)
+			return &ivar;
+	}
+
+	if (lexicalOuter)
+		return lexicalOuter->lookup(name, forWrite, remoteAccess);
+	else
+		return NULL;
 }
 
 void
@@ -127,19 +188,37 @@ Scope::realScope()
 void
 AnalysisVisitor::visitClass(AST::ClassNode *node)
 {
+	int i = 0;
+	std::list<AST::VarDecl *> varDecls;
+
+	std::cout << "Analyse class " << node->m_name << "\n";
+
 	methodClass = node;
 	node->m_classScope = new InstanceScope(node);
 	node->m_instanceScope = new InstanceScope(node);
 
-	for (auto &ivar : node->m_instanceVars) {
+	for (auto klass = node; klass != NULL; klass = klass->m_superClass) {
+		for (auto ivarIter = klass->m_instanceVars.rbegin();
+		     ivarIter != klass->m_instanceVars.rend(); ivarIter++) {
+			varDecls.emplace_front(&*ivarIter);
+		}
 	}
+
+	for (auto &ivar : varDecls) {
+		node->m_instanceScope->addIvar(ivar->name, i++);
+	}
+
+	AST::Visitor::visitClass(node);
 }
 
 void
 AnalysisVisitor::visitMethod(AST::MethodNode *node)
 {
 	method = node;
-	node->scope = new CodeScope(NULL, Scope::kMethod);
+	node->scope = new CodeScope(node->m_isClassMethod ?
+		methodClass->m_classScope :
+		methodClass->m_instanceScope,
+	    Scope::kMethod);
 	scopeStack.push(node->scope);
 	AST::Visitor::visitMethod(node);
 	for (auto &local : node->scope->locals)

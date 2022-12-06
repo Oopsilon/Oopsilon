@@ -164,7 +164,11 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 	funStack.push({});
 
 	/* method function signature */
-	fun() << "void method()\n{\n";
+	fun() << "void method(Process *__proc, Oop __self";
+	if (!node->scope->arguments.empty())
+		for (auto &arg : node->scope->arguments)
+			fun() << ", Oop " << arg.name;
+	fun() << ")\n{\n";
 
 	/* method body */
 #if 0
@@ -175,9 +179,9 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 
 	if (node->scope->needsHeapContext) {
 		fun()
-		    << "  if (oops_setjmp(thisContext->returnBuf) != 0) {"
+		    << "  if (vtrt_setjmp(thisContext->returnBuf) != 0) {"
 		       "\n    if(thisContext->flags & kContextShouldReturn)"
-		       "\n      return oops_return(thisContext, thisContext->retval);"
+		       "\n      return vtrt_return(thisContext, thisContext->retval);"
 		       "\n  }\n\n";
 	}
 #if 0
@@ -186,7 +190,7 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 
 	fun() << "__doReturn:"
 		 "\n    // set thread context to sender..."
-		 "\n    oops_markContextReturned(thisContext);"
+		 "\n    vtrt_markContextReturned(thisContext);"
 		 "\n    return __retVal;"
 		 "\n  }\n\n";
 #else
@@ -213,9 +217,9 @@ CodeGeneratorVisitor::visitReturnStmt(AST::ReturnStmtNode *node)
 {
 	std::cout << "Visiting return stmt\n";
 	if (node->isNonLocalReturn)
-		fun() << "return oops_nonLocalReturn(thisContext, ";
+		fun() << "return vtrt_nonLocalReturn(thisContext, ";
 	else
-		fun() << "return oops_return(thisContext, ";
+		fun() << "return vtrt_return(thisContext, ";
 	AST::Visitor::visitReturnStmt(node);
 	fun() << ");\n";
 }
@@ -233,7 +237,7 @@ CodeGeneratorVisitor::visitBlockLocalReturn(AST::ExprNode *node)
 		fun() << "goto __return;\n";
 #endif
 		/* this is return from a true block */
-		fun() << "return oops_return(thisContext, ";
+		fun() << "return vtrt_return(thisContext, ";
 		AST::Visitor::visitBlockLocalReturn(node);
 		fun() << ");\n";
 	} else {
@@ -287,7 +291,7 @@ CodeGeneratorVisitor::visitBlockExpr(AST::BlockExprNode *node)
 		types << ", oop " << nameForScope(var->scope) << var->name;
 	types << ")\n{\n";
 	/* body */
-	types << "  newBlock = allocOopsObj(sizeof(struct block"
+	types << "  newBlock = vtrt_allocOopsObj(sizeof(struct block"
 	      << (uintptr_t)node << ") / sizeof(Oop));\n";
 	/* heapvar vectors assignment */
 	for (auto &scope : node->scope->usingHeapvarsFrom)
@@ -352,9 +356,9 @@ CodeGeneratorVisitor::visitMessageExpr(AST::MessageExprNode *node)
 	std::cout << "Visiting message expression #" << node->selector << "\n";
 
 	if (node->specialKind == AST::MessageExprNode::kIfTrueIfFalse) {
-		fun() << "(";
+		fun() << "(vtrt_isTrue(";
 		node->receiver->accept(*this);
-		fun() << " ?\n    ";
+		fun() << ") ?\n    ";
 		node->args[0]->accept(*this);
 		fun() << " :\n    ";
 		node->args[1]->accept(*this);
@@ -439,6 +443,19 @@ CodeGeneratorVisitor::emitVariableAccess(Scope *scope, Variable *var,
 	}
 	case Variable::kInlinedBlockLocal:
 		return emitVariableAccess(scope, var->real, stream);
+	case Variable::kNamespaceMember:
+		stream << "%{namespace member " << var->name << "}%";
+		break;
+	case Variable::kInstanceVariable:
+		stream << "%{instance variable " << var->name << "}%";
+		break;
+	case Variable::kSelf: {
+		if (useCrossesBlock(scope, var->scope))
+			stream << "thisBlock->self";
+		else if (!elideThisContext)
+			stream << "thisContext->self";
+		break;
+	}
 	}
 }
 

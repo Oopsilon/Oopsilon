@@ -50,10 +50,12 @@ struct InstanceVariable : public Variable {
 	/* index, 0-based */
 	size_t index;
 
-	InstanceVariable(InstanceScope *scope, size_t index)
+	InstanceVariable(std::string aName, size_t index, InstanceScope *aScope)
 	    : index(index)
 	{
-		scope = scope;
+		kind = kInstanceVariable;
+		name = aName;
+		scope = (Scope *)aScope;
 	};
 };
 
@@ -64,15 +66,16 @@ class NamespaceMemberVariable : public Variable {
 	 */
 	AST::Node *node;
 
-public:
+    public:
 	NamespaceMemberVariable(std::string aName, AST::Node *node)
 	    : node(node)
 	{
+		kind = kNamespaceMember;
 		name = aName;
 		kind = kNamespaceMember;
 	}
 
-	AST::ClassNode*klass() { return dynamic_cast<AST::ClassNode *>(node) ; }
+	AST::ClassNode *klass() { return dynamic_cast<AST::ClassNode *>(node); }
 	bool isClass() { return klass() != NULL; };
 };
 
@@ -119,11 +122,22 @@ class Scope {
 class InstanceScope : public Scope {
     public:
 	AST::ClassNode *cls;
-	std::vector<Variable> instanceVars;
+	Variable selfVar;
+	std::vector<InstanceVariable> instanceVars;
 
 	InstanceScope(AST::ClassNode *cls)
 	    : cls(cls)
-	    , Scope(NULL, kClass) {};
+	    , Scope(NULL, kClass)
+	{
+		// TODO(ASAP): refactor
+		selfVar.name = "self";
+		selfVar.kind = Variable::kSelf;
+		selfVar.scope = this;
+	};
+
+	void addIvar(std::string name, int index);
+	Variable *lookup(std::string name, bool forWrite = false,
+	    bool remoteAccess = false);
 };
 
 /*
@@ -132,7 +146,7 @@ class InstanceScope : public Scope {
 class NamespaceScope : public Scope {
 	std::string name;
 	NamespaceScope *parent;
-	std::vector<Variable> members;
+	std::vector<NamespaceMemberVariable> members;
 
     public:
 	NamespaceScope(std::string name, NamespaceScope *parent)
@@ -141,6 +155,8 @@ class NamespaceScope : public Scope {
 	    , Scope(NULL, kNamespace) {};
 
 	void addClass(AST::ClassNode *klass);
+	NamespaceMemberVariable *lookup(std::string name, bool forWrite = false,
+	    bool remoteAccess = false);
 };
 
 /*
@@ -173,6 +189,10 @@ class CodeScope : public Scope {
 };
 
 class RegistrarVisitor : public AST::Visitor {
+	void visitClass(AST::ClassNode *node);
+};
+
+class LinkupVisitor : public AST::Visitor {
 	void visitClass(AST::ClassNode *node);
 };
 
