@@ -426,6 +426,7 @@ class MethodNode : public DeclNode {
 	std::vector<StmtNode *> m_statements;
 
 	/* semantic analysis */
+	ClassNode *m_class;
 	CodeScope * scope;
 
 	MethodNode(bool isClassMethod, std::string selector,

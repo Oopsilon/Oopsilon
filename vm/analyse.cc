@@ -215,6 +215,7 @@ void
 AnalysisVisitor::visitMethod(AST::MethodNode *node)
 {
 	method = node;
+	node->m_class = methodClass;
 	node->scope = new CodeScope(node->m_isClassMethod ?
 		methodClass->m_classScope :
 		methodClass->m_instanceScope,

@@ -172,6 +172,9 @@ class CodeScope : public Scope {
 	/* if this is a kMethod scope, the class in which the method is found */
 	AST::ClassNode *klass;
 
+	/* Scope name, used for e.g. struct declarations in the C generator. */
+	std::string name;
+
 	void addLocal(std::string name);
 	void addArg(std::string name);
 	void addInlinedBlockLocal(std::string name, bool isArg);

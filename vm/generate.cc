@@ -1,6 +1,8 @@
+#include <algorithm>
 #include <cassert>
 #include <iostream>
 #include <sstream>
+#include <fstream>
 
 #include "analyse.hh"
 #include "ast.hh"
@@ -31,6 +33,31 @@ useCrossesBlock(Scope *useScope, Scope *defScope)
 }
 
 std::string
+escape(std::string string)
+{
+	std::replace_if(
+	    string.begin(), string.end(),
+	    [](std::string::value_type v) { return v == ':'; }, '_');
+	return string;
+}
+
+std::string
+CodeGeneratorVisitor::genSymbolReference(std::string string)
+{
+	auto it = std::find(symbolNames.begin(), symbolNames.end(), string);
+	size_t index;
+
+	if (it != symbolNames.end())
+		index = it - symbolNames.begin();
+	else {
+		index = symbolNames.size();
+		symbolNames.push_back(string);
+	}
+
+	return "__symbolReferences[" + std::to_string(index) + "].ref";
+}
+
+std::string
 CodeGeneratorVisitor::blockName(AST::BlockExprNode *node)
 {
 	return "block" + std::to_string(uintptr_t(node));
@@ -56,7 +83,10 @@ CodeGeneratorVisitor::heapvarsNameForScope(Scope *scope)
 void
 CodeGeneratorVisitor::genContextType(std::string structName, CodeScope *scope)
 {
-	types << "struct " << structName << "_context {\n";
+	types << "struct " << structName << "_context {"
+	 "\n__VTRT_CONTEXT_MEMBERS"
+	 "\n";
+
 	std::string heapVarsName = (scope->heapvars.empty() ?
 		"__unused__" :
 		heapvarsNameForScope(scope));
@@ -74,7 +104,7 @@ CodeGeneratorVisitor::genContextType(std::string structName, CodeScope *scope)
 		}
 		types << "/* copied vars */\n";
 		for (auto &var : scope->copyingVars)
-			types << "  oop " << nameForScope(var->scope)
+			types << "  Oop " << nameForScope(var->scope)
 			      << var->name << ";\n";
 #endif
 		types << "  struct " << structName << " *"
@@ -84,12 +114,12 @@ CodeGeneratorVisitor::genContextType(std::string structName, CodeScope *scope)
 	types << "/* non-heapvar'd arguments */\n";
 	for (auto &var : scope->arguments)
 		if (var.remoteAccess != Variable::kWrittenRemotely)
-			types << "  oop " << nameForScope(scope) << var.name
+			types << "  Oop " << nameForScope(scope) << var.name
 			      << ";\n";
 	types << "/* non-heapvar'd locals */\n";
 	for (auto &var : scope->locals)
 		if (var.remoteAccess != Variable::kWrittenRemotely)
-			types << "  oop " << nameForScope(scope) << var.name
+			types << "  Oop " << nameForScope(scope) << var.name
 			      << ";\n";
 	types << "};\n\n";
 }
@@ -100,7 +130,7 @@ CodeGeneratorVisitor::genHeapvarsType(CodeScope *scope)
 	if (!scope->heapvars.empty()) {
 		types << "struct " << heapvarsNameForScope(scope) << " {\n";
 		for (auto &heapvar : scope->heapvars)
-			types << "  oop " << heapvar.name << ";\n";
+			types << "  Oop " << heapvar.name << ";\n";
 		types << "};\n\n";
 	}
 }
@@ -145,11 +175,49 @@ CodeGeneratorVisitor::genContextCreation(CodeScope *scope,
 	fun() << "\n";
 }
 
-void
-CodeGeneratorVisitor::visitClass(AST::ClassNode *node)
+CodeGeneratorVisitor::CodeGeneratorVisitor(
+    std::filesystem::path outputDirectory, AST::ClassNode *node)
 {
-	std::cout << "Visiting class called " << node->m_name << "\n";
+	std::cout << "Generating code for class " << node->m_name << "\n";
 	AST::Visitor::visitClass(node);
+
+	std::ofstream out(outputDirectory / (node->m_name + ".c"));
+	assert(out.is_open());
+
+	out << "#include <libruntime/vtrt.h>\n\n";
+
+	out << "static struct vtrt_symbolReference __symbolReferences["
+		  << symbolNames.size() << "] = {\n";
+	for (auto &symbol : symbolNames) {
+		out << "  {\"" << symbol << "\", NULL },\n";
+	}
+	out << "};\n\n";
+
+	out << translationUnitOut.str();
+
+	out << "static struct vtrt_methodArray __classMethods["
+		  << node->m_classMethods.size() << "] = {\n";
+	for (auto &method : node->m_classMethods)
+		out << "  {\"" << method->m_selector << "\","
+			  << method->scope->name << " },\n";
+	out << "};\n";
+
+	out << "static struct vtrt_methodArray __instanceMethods["
+		  << node->m_instanceMethods.size() << "] = {\n";
+	for (auto &method : node->m_instanceMethods)
+		out << "  {\"" << method->m_selector << "\","
+			  << method->scope->name << " },\n";
+	out << "};\n";
+
+	out << "struct vtrt_classTemplate " << node->m_name
+		  << " = {\n"
+		     "  .name = \""
+		  << node->m_name
+		  << "\",\n"
+		     "  .instanceMethods = __instanceMethods,\n"
+		     "  .classMethods = __classMethods,\n"
+		     "  .symbolReferences = __symbolReferences,\n"
+		     "};\n";
 }
 
 void
@@ -157,14 +225,16 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 {
 	std::cout << "Visiting method called " << node->m_selector << "\n";
 
+	node->scope->name = (node->m_isClassMethod ? "_c_" : "_i_") +
+	    node->m_class->m_name + "__" + escape(node->m_selector);
 	genHeapvarsType(node->scope);
-	genContextType("M", node->scope);
+	genContextType(node->scope->name, node->scope);
 
 	scope.push(node->scope);
 	funStack.push({});
 
 	/* method function signature */
-	fun() << "void method(Process *__proc, Oop __self";
+	fun() << "Oop " << node->scope->name << "(void *__sender, Oop __self";
 	if (!node->scope->arguments.empty())
 		for (auto &arg : node->scope->arguments)
 			fun() << ", Oop " << arg.name;
@@ -172,9 +242,9 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 
 	/* method body */
 #if 0
-	fun() << "  oop __retVal = self;\n";
+	fun() << "  Oop __retVal = self;\n";
 #endif
-	genContextCreation(node->scope, "M_context", fun());
+	genContextCreation(node->scope, node->scope->name + "_context", fun());
 	genMoveArgumentsToHeapvars(node->scope, fun());
 
 	if (node->scope->needsHeapContext) {
@@ -205,11 +275,10 @@ CodeGeneratorVisitor::visitMethod(AST::MethodNode *node)
 	funStack.pop();
 	scope.pop();
 
-	std::cout
-	    << "/*\n * generated by the Valutron Optimizing Compiler\n */\n";
-	std::cout << types.str() << "\n";
+	translationUnitOut << types.str() << "\n";
+	types.clear();
 	for (auto &fun : funcs)
-		std::cout << fun << "\n";
+		translationUnitOut << fun << "\n";
 }
 
 void
@@ -273,24 +342,26 @@ CodeGeneratorVisitor::visitBlockExpr(AST::BlockExprNode *node)
 	}
 	types << "/* copied vars */\n";
 	for (auto &var : node->scope->copyingVars)
-		types << "  oop " << nameForScope(var->scope) << var->name
+		types << "  Oop " << nameForScope(var->scope) << var->name
 		      << ";\n";
 	types << "};\n\n";
 
 	/* block context type */
-	genContextType(blockName(node), node->scope);
+	genContextType(blockName(node) + "_context", node->scope);
 
 	/* the function to make the block */
-	types << "makeBlock" << (intptr_t)node << "(oop self";
+	types << "struct " << blockName(node) << " *makeBlock" << (intptr_t)node
+	      << "(Oop self";
 	/* heapvar vector arguments */
 	for (auto &scope : node->scope->usingHeapvarsFrom)
 		types << ", struct " << heapvarsNameForScope(scope) << " *"
 		      << heapvarsNameForScope(scope);
 	/* copied variable parameters */
 	for (auto &var : node->scope->copyingVars)
-		types << ", oop " << nameForScope(var->scope) << var->name;
+		types << ", Oop " << nameForScope(var->scope) << var->name;
 	types << ")\n{\n";
 	/* body */
+	types << "  struct " << blockName(node) << " *newBlock;\n";
 	types << "  newBlock = vtrt_allocOopsObj(sizeof(struct block"
 	      << (uintptr_t)node << ") / sizeof(Oop));\n";
 	/* heapvar vectors assignment */
@@ -399,13 +470,9 @@ CodeGeneratorVisitor::visitMessageExpr(AST::MessageExprNode *node)
 plain:
 	fun() << "msgLookup(";
 	node->receiver->accept(*this);
-	fun() << ", \"" << node->selector << "\")";
-	fun() << "(";
-	bool first = true;
+	fun() << ", " << genSymbolReference(node->selector) << ")";
+	fun() << "(__sender, thisContext->self";
 	for (auto &arg : node->args) {
-		if (first)
-			first = false;
-		else
 			fun() << ", ";
 		arg->accept(*this);
 	}
