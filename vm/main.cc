@@ -20,21 +20,24 @@ template <typename T>void visit(std::vector<AST::DeclNode*>& decls)
 int
 main(int argc, char *argv[])
 {
-	assert(argc == 2);
+	assert(argc >= 2);
 
 	std::cout << "NetaScale(tm) Optimising Compiler for Valutron\n";
-	std::cout << "Compiling " << argv[1] << "\n";
+	std::cout << "Compiling " << argc - 1 << " files\n";
 
-	std::string fname = argv[1];
-	std::ifstream t(fname);
-	std::stringstream buffer;
 	auto outDir = std::filesystem::current_path() / "valuout";
 
-	buffer << t.rdbuf();
+	std::vector<AST::DeclNode *> decls;
 
-	std::cout << "Parsing...\n";
-	auto decls = MVST_Parser::parseFile(argv[1], buffer.str());
-
+	for (int i = 1; i < argc; i++) {
+		std::cout << "Parsing " << argv[i] << "...\n";
+		std::string fname = argv[i];
+		std::ifstream t(fname);
+		std::stringstream buffer;
+		buffer << t.rdbuf();
+		auto parsed = MVST_Parser::parseFile(fname, buffer.str());
+		decls.insert(decls.end(), parsed.begin(), parsed.end());
+	}
 	std::cout <<"Analysing (global names)...\n";
 	visit<RegistrarVisitor>(decls);
 	visit<LinkupVisitor>(decls);
@@ -67,17 +70,17 @@ main(int argc, char *argv[])
 	std::ofstream mod(outDir / "mod.c");
 	mod << "#include <libruntime/vtrt.h>"
 	       "\n"
-	       "\nint main(int argc, char * argv)"
+	       "\nint main(int argc, char *argv[])"
 	       "\n{";
 	for (auto &klass : classes) {
 		mod << "\n  extern struct vtrt_classTemplate " << klass
 		    << ";"
 		       "\n  vtrt_registerClass(\""
-		    << klass << "\", " << klass << ");";
+		    << klass << "\", &" << klass << ");";
 	}
 	mod << "\n  vtrt_main(argc, argv);"
 	       "\n}"
 	       "\n";
 
-	return 42;
+	return 0;
 }

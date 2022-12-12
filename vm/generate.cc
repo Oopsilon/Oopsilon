@@ -172,6 +172,9 @@ CodeGeneratorVisitor::genContextCreation(CodeScope *scope,
 		fun() << " = allocOopsObj(sizeof(struct "
 		      << heapvarsNameForScope(scope) << "));\n";
 	}
+
+	fun() << "  thisContext->self = __self;\n";
+
 	fun() << "\n";
 }
 
@@ -210,14 +213,28 @@ CodeGeneratorVisitor::CodeGeneratorVisitor(
 	out << "};\n";
 
 	out << "struct vtrt_classTemplate " << node->m_name
-		  << " = {\n"
-		     "  .name = \""
-		  << node->m_name
-		  << "\",\n"
-		     "  .instanceMethods = __instanceMethods,\n"
-		     "  .classMethods = __classMethods,\n"
-		     "  .symbolReferences = __symbolReferences,\n"
-		     "};\n";
+	    << " = {"
+	       "\n  .name = \""
+	    << node->m_name
+	    << "\","
+	       "\n  .superName = \""
+	    << node->m_superName
+	    << "\","
+	       "\n  .instanceMethods = __instanceMethods,"
+	       "\n  .classMethods = __classMethods,"
+	       "\n  .symbolReferences = __symbolReferences,"
+	       "\n  .nInstanceMethods = "
+	    << node->m_instanceMethods.size()
+	    << "\n  .nClassMethods = " << node->m_classMethods.size()
+	    << "\n  .nSymbolReferences = " << symbolNames.size()
+	    << "\n  .instanceSize = "
+	    << node->m_instanceScope->instanceVars.size()
+	    << ","
+	       "\n  .classSize = "
+	    << node->m_classScope->instanceVars.size()
+	    << ","
+	       "\n"
+	       "};\n";
 }
 
 void

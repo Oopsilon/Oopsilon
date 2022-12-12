@@ -189,7 +189,7 @@ void
 AnalysisVisitor::visitClass(AST::ClassNode *node)
 {
 	int i = 0;
-	std::list<AST::VarDecl *> varDecls;
+	std::list<AST::VarDecl *> allIvarDecls, allCvarDecls;
 
 	std::cout << "Analyse class " << node->m_name << "\n";
 
@@ -200,13 +200,19 @@ AnalysisVisitor::visitClass(AST::ClassNode *node)
 	for (auto klass = node; klass != NULL; klass = klass->m_superClass) {
 		for (auto ivarIter = klass->m_instanceVars.rbegin();
 		     ivarIter != klass->m_instanceVars.rend(); ivarIter++) {
-			varDecls.emplace_front(&*ivarIter);
+			allIvarDecls.emplace_front(&*ivarIter);
+		}
+				for (auto cvarIter = klass->m_classInstanceVars.rbegin();
+		     cvarIter != klass->m_classInstanceVars.rend(); cvarIter++) {
+			allCvarDecls.emplace_front(&*cvarIter);
 		}
 	}
 
-	for (auto &ivar : varDecls) {
+	for (auto &ivar : allIvarDecls)
 		node->m_instanceScope->addIvar(ivar->name, i++);
-	}
+	for (auto &cvar : allCvarDecls)
+		node->m_classScope->addIvar(cvar->name, i++);
+
 
 	AST::Visitor::visitClass(node);
 }

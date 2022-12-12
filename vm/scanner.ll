@@ -80,6 +80,7 @@ RadixInteger [0-9]+r-?[0-9A-Z]+
 
 "class>>"			{ p(CLASSRR); }
 "subclass:"			{ p(SUBCLASSCOLON); }
+"variableByteSubclass:" { p(VARIABLEBYTESUBCLASSCOLON); }
 "Namespace"			{ p(NAMESPACE); }
 "current:"			{ p(CURRENTCOLON); }
 

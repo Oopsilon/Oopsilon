@@ -5,20 +5,34 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef uintptr_t SmiOop;
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-typedef struct {
-	int stuff
-} MemDesc;
+#define VT_tagBits 3
+#define VT_tagMask 7
+#define VT_tag(x) (((intptr_t)x) & VT_tagMask)
+#define VT_isPtr(x) (!VT_tag (x))
+#define VT_isSmi(x) (VT_tag (x) == 1)
+#define VT_intValue(x) (((intptr_t)x) >> VT_tagBits)
+#define VTRT_MAKESMI(iVal) ((void *) (((iVal) << VT_tagBits) | 1))
 
-typedef MemDesc * MemOop;
+typedef uintptr_t vtrt_smi_t;
+
+struct vtrt_objectHeader {
+
+};
+
+typedef struct vtrt_objectHeader * vtrt_memoop_t;
 
 typedef union {
-	MemOop ptr;
-	SmiOop value;
-} Oop;
+	vtrt_memoop_t ptr;
+	vtrt_smi_t value;
+} oop;
 
-typedef Oop ProcessOop;
+typedef oop process_oop;
+
+typedef oop (*vtrt_method_fn_t)(void * __sender, oop __self,...);
 
 /*!
  * @name templates
@@ -32,14 +46,22 @@ struct vtrt_methodArray {
 
 struct vtrt_symbolReference {
 	const char *string;
-	Oop ref;
+	oop ref;
 };
 
 struct vtrt_classTemplate {
+	/* fully-qualified name */
         const char *name;
-        struct vtrt_methodArray *classMethods;
+	/* fully-qualified superclass' name */
+	const char *superName;
         struct vtrt_methodArray *instanceMethods;
+        struct vtrt_methodArray *classMethods;
         struct vtrt_symbolReference *symbolReferences;
+	size_t nInstanceMethods;
+	size_t nClassMethods;
+	size_t nSymbolReferences;
+	size_t instanceSize;
+	size_t classSize;
 };
 
 /*!
@@ -54,10 +76,17 @@ enum vtrt_contextFlags {
         kContextShouldReturn = 1,
 };
 
-void allocOopsObj(size_t bytes);
-Oop (*msgLookup(Oop receiver, Oop selector))(void * __sender, Oop __self,...);
-Oop vtrt_return(volatile void * context, Oop value);
-bool vtrt_isTrue(Oop value);
-Oop makeSMI(uintptr_t value);
+void vtrt_registerClass(const char *name, struct vtrt_classTemplate *templ);
+int vtrt_main(int argc, char *argv[]);
+
+vtrt_memoop_t allocOopsObj(size_t nOops);
+oop (*msgLookup(oop receiver, oop selector))(void * __sender, oop __self,...);
+oop vtrt_return(volatile void * context, oop value);
+bool vtrt_isTrue(oop value);
+oop makeSMI(uintptr_t value);
+
+#ifdef __cplusplus
+} /* extern "C" */
+#endif
 
 #endif /* VTRT_H_ */

@@ -41,7 +41,7 @@ std::vector<DeclNode*> MVST_Parser::parseFile (std::string fName, std::string sr
 	YY_BUFFER_STATE yyb;
 
 	parser = MVST_Parser::create(fName, src);
-	if (1)
+	if (0)//1)
 		parser->trace(stdout, "<parser>: ");
 
 	mvstlex_init_extra(parser, &scanner);
@@ -117,7 +117,7 @@ Position MVST_Parser::pos()
 	}
 }
 
-prog ::= decl_list. { printf("Program finished!!\n"); }
+prog ::= decl_list.
 
 %type decl_list { std::vector<DeclNode *> }
 %type decl { DeclNode * }
@@ -130,22 +130,36 @@ decl_list ::= decl_list(l) decl(d).
 
 decl ::= class_def.
 
-
-class_def(D) ::= identifier(super) type_args_opt(superTyArgs) SUBCLASSCOLON
+class_def(D) ::= identifier(super) type_args_opt(superTyArgs)
+    subclass_selector(kind)
     identifier(name) type_params_opt(tyParams) SQB_OPEN
-    var_defs_opt(iVars) method_defs_opt(methods) SQB_CLOSE. {
-	D = new ClassNode(name, super, iVars, {});
+    ivar_cvar_defs_opt(vars) method_defs_opt(methods) SQB_CLOSE. {
+	D = new ClassNode(name, super, kind, vars.first, vars.second);
 	D->addMethods(methods);
 }
 
-%type ivar_cvar_defs_opt { std::vector<VarDecl> }
+%type subclass_selector { ClassNode::ClassKind }
+
+subclass_selector(S) ::= SUBCLASSCOLON. { S = ClassNode::kNormal; }
+subclass_selector(S) ::= VARIABLEBYTESUBCLASSCOLON. { S = ClassNode::kBytes; }
+
+%type ivar_cvar_defs_opt { std::pair<std::vector<VarDecl>, std::vector<VarDecl>> }
 %type var_defs_opt { std::vector<VarDecl> }
 %type var_def_list_opt { std::vector<VarDecl> }
 %type var_def_list { std::vector<VarDecl> }
 
+ivar_cvar_defs_opt ::= .
+ivar_cvar_defs_opt(L) ::= BAR var_def_list_opt(l) BAR. { L = {l, {}}; }
+ivar_cvar_defs_opt(L) ::= BAR var_def_list_opt(i) BAR BAR var_def_list(c) BAR. {
+	L = {i, c};
+}
+
 /* optional bar-enclosed variable definition list */
 var_defs_opt ::= .
 var_defs_opt(L) ::= BAR var_def_list(l) BAR. { L = l; }
+
+var_def_list_opt ::= .
+var_def_list_opt(L) ::= var_def_list(l). { L = l; }
 
 var_def_list(L) ::= type_spec_opt(t) IDENTIFIER(i). { L = {{i, t}}; }
 var_def_list(L) ::= var_def_list(l) type_spec_opt(t) IDENTIFIER(i). {

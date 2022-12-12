@@ -449,29 +449,26 @@ class ClassNode : public DeclNode {
     public:
 	std::string m_name;
 	std::string m_superName;
+	enum ClassKind { kNormal, kBytes } m_kind;
 	std::vector<VarDecl> m_instanceVars;
-	std::vector<VarDecl> m_classVars;
+	std::vector<VarDecl> m_classInstanceVars;
 	std::vector<MethodNode*> m_instanceMethods;
 	std::vector<MethodNode*> m_classMethods;
 
 	/* -- decorations after semantic analysis -- */
 	/* The superclass node, if there is one. */
 	ClassNode * m_superClass;
-
+	/* Name scopes for class methods and instance methods. */
 	InstanceScope * m_classScope,*  m_instanceScope;
 
-#if 0
-	/* All instance variables, including those inherited. */
-	std::vector<VarDecl*> m_allInstanceVariables;
-#endif
-
-	ClassNode(std::string name, std::string superName,
+	ClassNode(std::string name, std::string superName, ClassKind kind,
 	    std::vector<VarDecl> instanceVars, std::vector<VarDecl> classVars)
 	    : DeclNode({})
 	    , m_name(name)
 	    , m_superName(superName)
+	    , m_kind(kind)
 	    , m_instanceVars(instanceVars)
-	    , m_classVars(classVars) {};
+	    , m_classInstanceVars(classVars) {};
 
 	void accept(Visitor &visitor) { visitor.visitClass(this); }
 
